@@ -1,7 +1,9 @@
 # -*- coding: utf-8 -*-
 
+import itertools
 import os
 
+import filefox
 import requests
 import tqdm
 from lxml import etree
@@ -42,13 +44,42 @@ def get_images(name, html_file, image_dir):
     os.makedirs(image_dir, exist_ok=True)
 
     root = etree.fromstring(content, etree.HTMLParser())
-    for element in root.xpath("//div[contains(@class, 'digimon_img')]/a"):
-        path = element.get("href")
-
+    image_urls = itertools.chain(
+        (x.get("href") for x in root.xpath("//div[contains(@class, 'digimon_img')]/a")),
+        (
+            x.get("src")
+            for x in root.xpath("//div[contains(@class, 'digimon_img')]//img")
+        ),
+    )
+    for path in image_urls:
         image_file = os.path.join(image_dir, path)
         if not os.path.exists(image_file):
             url = os.path.join(BASE_URL, name, path)
             get_image(url, image_file)
+
+
+def parse_html(html):
+    def parse_basic_info(e):
+        keys = [x.text for x in e.xpath("./table//th")]
+        values = [x.text for x in e.xpath("./table//td")]
+
+        return dict(zip(keys, values))
+
+    root = etree.fromstring(html, etree.HTMLParser())
+    article = root.xpath("//article")[0]
+
+    elements = {}
+    it = iter(article.iterchildren())
+    while (child := next(it, None)) is not None:
+        if child.tag == "h3":
+            elements[child.text] = next(it, None)
+
+    value = {}
+    for key, element in elements.items():
+        if key == "基本资料":
+            value = parse_basic_info(element)
+
+    return value
 
 
 def main():
@@ -65,6 +96,11 @@ def main():
 
         image_dir = os.path.join(dirname, "images")
         get_images(name, html_file, image_dir)
+
+        with open(html_file) as f:
+            data = parse_html(f.read())
+        json_file = os.path.join(dirname, "data.json")
+        filefox.write_json(data, json_file, ensure_ascii=False, indent=4)
 
 
 if __name__ == "__main__":
